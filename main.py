@@ -1,15 +1,21 @@
 import os
+import random
 import time
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import warnings
 
 from sklearn.cluster import MiniBatchKMeans
 from sklearn.metrics import adjusted_rand_score
 from scipy import sparse
 from pybloom_live import BloomFilter
 from Bio import pairwise2
+from Bio import BiopythonDeprecationWarning
 from Bio.Seq import Seq
+from typing import Tuple
+
+from clustcr import Clustering, datasets, metarepertoire
 
 
 def read_tsv(file_path: str, delimiter='\t') -> pd.DataFrame:
@@ -113,7 +119,41 @@ def cluster_tcr_sequences(df: pd.DataFrame, k=2, error_rate=0.001, n_clusters=10
 
     # Perform clustering.
     clustering = MiniBatchKMeans(n_clusters=n_clusters)
-    return clustering, clustering.fit_predict(x)
+
+
+"""
+# Cluster TCR sequences.
+clustering1, clusters1 = cluster_tcr_sequences(p1_d0[:100000], k=3, error_rate=0.0001, n_clusters=10000)
+
+# for cluster_label in range(clustering1.n_clusters):
+#     # Retrieve indices of TCR sequences belonging to this cluster.
+#     cluster_indices = np.where(clusters1 == cluster_label)[0]
+#     print(f"Cluster {cluster_label}:")
+#     print(f"{p1_d0.iloc[cluster_indices]}")
+
+# Compute the pairwise sequence identities within each cluster.
+for cluster_label in range(clustering1.n_clusters):
+    # Retrieve the TCR sequences belonging to this cluster.
+    cluster_seqs = p1_d0.iloc[np.where(clusters1 == cluster_label)[0]].tolist()
+    n_seqs = len(cluster_seqs)
+    # Compute the pairwise sequence identities.
+    sequence_identities = []
+    for i, seq1 in enumerate(cluster_seqs):
+        for j, seq2 in enumerate(cluster_seqs[i + 1:], i + 1):
+            identity = pairwise_sequence_identity(seq1, seq2)
+            sequence_identities.append(identity)
+    # Compute mean and standard deviation of pairwise sequence identities.
+    mean_identity = np.mean(sequence_identities)
+    std_dev = np.std(sequence_identities)
+    min_identity = min(sequence_identities, default=np.nan)
+    max_identity = max(sequence_identities, default=np.nan)
+    print(f"Cluster {cluster_label} (n={n_seqs}): Mean identity = {mean_identity:.3f}%, Std dev = {std_dev:.3f}%")
+    if sequence_identities:
+        print(
+            f"    - This cluster contains TCR sequences that {'share' if mean_identity > 50 else 'do not share'} a moderate level of sequence similarity, with an average pairwise identity of {mean_identity:.1f}% and a range of identities from {min_identity:.1f}% to {max_identity:.1f}%.")
+    else:
+        print("    - This cluster contains no TCR sequences.")
+"""
 
 
 def pairwise_sequence_identity(seq1, seq2):
@@ -140,40 +180,126 @@ def pairwise_sequence_identity(seq1, seq2):
     return (alignment[2] / alignment[4]) * 100
 
 
+def visualize_features(features: pd.DataFrame):
+    # Reference - https://svalkiers.github.io/clusTCR/docs/analyzing/features.html
+
+    # Plot entropy of each cluster.
+    fig, ax = plt.subplots()
+    ax.bar(features.index, features['h'])
+    ax.set_xlabel('Cluster')
+    ax.set_ylabel('Entropy')
+    ax.set_title('Entropy for Clusters')
+    plt.show()
+
+    # Plot the number of sequences in each cluster.
+    fig, ax = plt.subplots()
+    ax.bar(features.index, features['size'])
+    ax.set_xlabel('Cluster')
+    ax.set_ylabel('Number of Sequences')
+    ax.set_title('Size of Clusters')
+    plt.show()
+
+    # Length of sequences in the cluster
+    fig, ax = plt.subplots()
+    ax.hist(features['length'], bins=range(25))
+    ax.set_xlabel('CDR3 Sequence Length')
+    ax.set_ylabel('Frequency')
+    ax.set_title('Length of CDR3 Sequences in Clusters')
+    plt.show()
+
+    # Plot the average and variance basicity of each cluster.
+    fig, ax = plt.subplots()
+    ax.scatter(features['basicity_avg'], features['basicity_var'])
+    ax.set_xlabel('Average Basicity')
+    ax.set_ylabel('Variance in Basicity')
+    ax.set_title('Basicity in Clusters')
+    plt.show()
+
+
+def metareportoire(samples: list, training_sample_size: int) -> Tuple[pd.DataFrame, bool]:
+    """
+    Create a metareportoire from a list of samples.
+
+    :param samples: A list of pandas DataFrame objects, each containing sequences to be concatenated.
+    :param training_sample_size: An integer specifying the maximum number of sequences to reach.
+    :return: A tuple containing the metareportoire as a pandas DataFrame and a boolean indicating whether the
+            traning_sample_size was reached.
+    """
+    # Randomly select a sample.
+    random.shuffle(samples)
+    meta = samples[0]
+    meta.drop_duplicates(inplace=True)
+
+    # Concatenate the remaining samples until the training sample size is reached.
+    for i in samples[1:]:
+        meta = pd.concat([meta, i])
+        meta.drop_duplicates(inplace=True)
+        meta.reset_index()
+        if len(meta) > training_sample_size:
+            meta = meta.sample(training_sample_size)
+
+    return meta, len(meta) >= training_sample_size
+
+
 if __name__ == "__main__":
     persons = ['P1', 'P2', 'Q1', 'Q2', 'S1', 'S2']
     days = ['d0', 'd15']
-    df = read_files('data/Pogorelyy_YF/', persons, days, saveAll=False)
+    dict_df = read_files('data/Pogorelyy_YF/', persons, days, saveAll=False)
+    dict_df = {key: value[:500] for key, value in dict_df.items()}
 
-    p1_d0 = df['P1_d0']
-    # Cluster TCR sequences.
-    clustering1, clusters1 = cluster_tcr_sequences(p1_d0[:100000], k=3, error_rate=0.0001, n_clusters=10000)
+    # Calculate the total number of sequences in the dataset.
+    total_sequences = sum(len(i) for i in dict_df.values())
+    # Cluster size.
+    faiss_cluster_size = 5000
+    # Calculate recommended sample size.
+    training_sample_size = round(1000 * (total_sequences / faiss_cluster_size))
 
-    # for cluster_label in range(clustering1.n_clusters):
-    #     # Retrieve indices of TCR sequences belonging to this cluster.
-    #     cluster_indices = np.where(clusters1 == cluster_label)[0]
-    #     print(f"Cluster {cluster_label}:")
-    #     print(f"{p1_d0.iloc[cluster_indices]}")
+    # TODO - filter out unresolved sequences??
 
-    # Compute the pairwise sequence identities within each cluster.
-    for cluster_label in range(clustering1.n_clusters):
-        # Retrieve the TCR sequences belonging to this cluster.
-        cluster_seqs = p1_d0.iloc[np.where(clusters1 == cluster_label)[0]].tolist()
-        n_seqs = len(cluster_seqs)
-        # Compute the pairwise sequence identities.
-        sequence_identities = []
-        for i, seq1 in enumerate(cluster_seqs):
-            for j, seq2 in enumerate(cluster_seqs[i + 1:], i + 1):
-                identity = pairwise_sequence_identity(seq1, seq2)
-                sequence_identities.append(identity)
-        # Compute mean and standard deviation of pairwise sequence identities.
-        mean_identity = np.mean(sequence_identities)
-        std_dev = np.std(sequence_identities)
-        min_identity = min(sequence_identities, default=np.nan)
-        max_identity = max(sequence_identities, default=np.nan)
-        print(f"Cluster {cluster_label} (n={n_seqs}): Mean identity = {mean_identity:.3f}%, Std dev = {std_dev:.3f}%")
-        if sequence_identities:
-            print(
-                f"    - This cluster contains TCR sequences that {'share' if mean_identity > 50 else 'do not share'} a moderate level of sequence similarity, with an average pairwise identity of {mean_identity:.1f}% and a range of identities from {min_identity:.1f}% to {max_identity:.1f}%.")
-        else:
-            print("    - This cluster contains no TCR sequences.")
+    # Choose a random sample of sequences to create the metareportoire.
+    samples = list(dict_df.values())
+    # Keep calculating metareportoire with an increased cluster size until the sample size is reached.
+    meta, success = metareportoire(samples, training_sample_size)
+    while success is False:
+        print(f'Metarepertoire: less sequences found than desired ({len(meta[0])} vs {training_sample_size}), \
+                increasing faiss_cluster_size to {faiss_cluster_size * 1.1}')
+        faiss_cluster_size *= 1.1
+        training_sample_size = round(1000 * (total_sequences / faiss_cluster_size))
+        meta, success = metareportoire(samples, training_sample_size)
+
+    # Compute the maximum sequence length in the metareportoire.
+    max_seq_len = meta.str.len().max()
+
+
+    print(f'Perform clustering with a faiss_cluster_size of {faiss_cluster_size} and a training_sample_size of {training_sample_size} with a total of {total_sequences} sequences.')
+    # Create clustering object.
+    clustering = Clustering(faiss_training_data=meta, fitting_data_size=total_sequences, max_sequence_size=max_seq_len,
+                            n_cpus='all', method='two-step', faiss_cluster_size=faiss_cluster_size, mcl_params=[1.2, 2])
+
+
+
+    for i in dict_df.values():
+        clustering.batch_precluster(i)
+    for cluster in clustering.batch_cluster():
+        print(cluster.clusters_df)
+
+    clustering.batch_cleanup()
+
+    # p1_d0 = df['P1_d0']
+    #
+    # # Reference - https://svalkiers.github.io/clusTCR/
+    # clustering = Clustering(method='two-step', n_cpus='all', faiss_cluster_size=5000, mcl_params=[1.2, 2])
+    #
+    # results = clustering.fit(p1_d0[:1000])
+    # # Include CDR3 alpha chain.
+    #
+    # # Retrieve dataframe containing clusters.
+    # # results.clusters_df
+    #
+    # # Retrieve CDR3's in each cluster.
+    # # print(results.cluster_contents())
+    #
+    # # Retrieve features of clustering.
+    # features = results.compute_features(compute_pgen=True)
+    #
+    # visualize_features(features)
