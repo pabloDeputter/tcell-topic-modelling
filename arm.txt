@@ -1,4 +1,0 @@
-conda create -n intel_env
-conda activate intel_env
-conda config --env --set subdir osx-64
-conda install python
