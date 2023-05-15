@@ -142,8 +142,7 @@ def pairwise_sequence_identity(seq1, seq2):
     # Calculate the pairwise sequence identity as a percentage
     return (alignment[2] / alignment[4]) * 100
 
-
-# persons = ['P1', 'P2', 'Q1', 'Q2', 'S1', 'S2']
+    # persons = ['P1', 'P2', 'Q1', 'Q2', 'S1', 'S2']
     # days = ['d0', 'd15']
     # # df = read_files_df('data/Pogorelyy_YF/', persons, days, saveAll=True, num_lines=10000)
     #
@@ -244,3 +243,77 @@ def pairwise_sequence_identity(seq1, seq2):
     #     topic_words[f"Topic {topic_idx}"] = words
     #
     # print(topic_words)
+
+    def process_files():
+        filenames = ['P1_d0', 'P1_d15', 'P2_d0', 'P2_d15', 'Q1_d0', 'Q1_d15', 'Q2_d0', 'Q2_d15', 'S1_d0', 'S1_d15',
+                     'S2_d0', 'S2_d15']
+
+        pool = multiprocessing.Pool()
+
+        # use partial to fix the filename_save argument to the preprocess_file function
+        preprocess_func = partial(preprocess_file, min_read_count=10)
+
+        results = []
+
+        for filename in filenames:
+            filename_with_path = 'data/Pogorelyy_YF/{}.pkl'.format(filename)
+
+            # skip files that have already been processed
+            if os.path.exists('pre_processed_{}.csv'.format(filename)):
+                continue
+
+            result = pool.apply_async(preprocess_func,
+                                      args=(filename_with_path, 'pre_processed_{}.csv'.format(filename)))
+            results.append(result)
+
+        pool.close()
+        pool.join()
+
+        # check for exceptions
+        for result in results:
+            try:
+                result.get()
+            except Exception as e:
+                print(f"A task failed with exception: {type(e).__name__}, {e.args}")
+
+    def metareportoire(samples: list, training_sample_size: int) -> Tuple[pd.DataFrame, bool]:
+        """
+        Create a metareportoire from a list of samples.
+
+        :param samples: A list of pandas DataFrame objects, each containing sequences to be concatenated.
+        :param training_sample_size: An integer specifying the maximum number of sequences to reach.
+        :return: A tuple containing the metareportoire as a pandas DataFrame and a boolean indicating whether the
+                training_sample_size was reached.
+        """
+        # Randomly select a sample.
+        random.shuffle(samples)
+        meta = samples[0]
+        meta.drop_duplicates(inplace=True)
+
+        # Concatenate the remaining samples until the training sample size is reached.
+        for i in samples[1:]:
+            meta = pd.concat([meta, i])
+            meta.drop_duplicates(inplace=True)
+            meta.reset_index()
+            if len(meta) > training_sample_size:
+                return meta.sample(training_sample_size), True
+
+        return meta, False
+
+    def preprocess_tcr_sequences(df: pd.DataFrame, unresolved: str = 'X', min_read_count: int = 1) -> pd.DataFrame:
+        """
+        Preprocesses TCR sequences in a DataFrame by removing sequences containing unresolved amino acids, removing duplicates,
+        filtering out sequences with a low read count, and selecting a maximum number of sequences.
+
+        :param df: pd.DataFrame, DataFrame containing TCR sequences.
+        :param unresolved: str, optional, string indicating unresolved amino acids. Defaults to 'X'.
+        :param min_read_count: int, optional, minimum read count threshold. Sequences with read count below this value will be removed. Defaults to 1.
+
+        :return: pd.DataFrame, preprocessed DataFrame containing TCR sequences.
+        """
+        # Remove sequences containing unresolved amino acids
+        df_filtered = df[~df['CDR3.amino.acid.sequence'].str.contains(unresolved)]
+        # Remove duplicates
+        df_filtered.drop_duplicates(subset='CDR3.amino.acid.sequence', inplace=True)
+        # Remove sequences with a low read count
+        return df_filtered.loc[df_filtered['Read.count'] >= min_read_count]

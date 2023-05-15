@@ -1,4 +1,6 @@
 import os
+import time
+
 import pandas as pd
 import matplotlib.pyplot as plt
 
@@ -128,6 +130,32 @@ def read_files_df(path: str, persons: list[str], timestamps: list[str], saveAll=
             df_list.append(df.head(num_lines))
     df = pd.concat(df_list, ignore_index=True)
     return df
+
+
+def timer_decorator(func):
+    """
+    Decorator function that times the execution of another function.
+
+    :param func: The function to be timed.
+    :return: The result returned by the function.
+    """
+
+    def wrapper(*args, **kwargs):
+        """
+        Wrapper function that adds timing functionality to the decorated function.
+
+        :param args: Positional arguments to be passed to the decorated function.
+        :param kwargs: Keyword arguments to be passed to the decorated function.
+        :return: The result returned by the decorated function.
+        """
+        start_time = time.time()
+        result = func(*args, **kwargs)
+        end_time = time.time()
+        execution_time = end_time - start_time
+        print(f"Function '{func.__name__}' took {execution_time:.6f} seconds to execute.")
+        return result
+
+    return wrapper
 
 
 def visualize_features(features: pd.DataFrame):
