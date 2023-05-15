@@ -1,3 +1,4 @@
+import sys
 from collections import defaultdict
 from gensim import corpora, models, similarities
 import numpy as np
@@ -15,7 +16,11 @@ def read_data(filenames: list[str]):
         mens : list[tuple[int, int]] = []
         with open(filename, "r") as f:
             for line in f:
-                aantal, woord = line.strip().split("\t")
+                # if the line ends on a tab, skip
+                fields = line.strip().split("\t")
+                if len(fields) != 2:
+                    continue
+                aantal, woord = fields
                 if int(aantal) > 2:
                     if woord not in reverse_dictionary:
                         reverse_dictionary[woord] = id_teller
@@ -23,6 +28,7 @@ def read_data(filenames: list[str]):
                         id_teller += 1
                     mens.append((reverse_dictionary[woord], int(aantal)))
         corpus.append(mens)
+    print("Number of unique tokens: %d" % len(dictionary))
     return corpus, dictionary
 
 """
@@ -62,9 +68,8 @@ def doLDA(corpus: list[list[tuple[int, int]]], dictionary : dict[int, str], num_
     from gensim.models import LdaModel
     import logging
     logging.basicConfig(format='%(asctime)s : %(levelname)s : %(message)s', level=logging.WARNING)
-    num_topics = 6
-    chunksize = 2000
-    passes = 15
+    chunksize = 200000
+    passes = 10
     iterations =350
     eval_every = None # Don't evaluate model perplexity, takes too much time.
     #temp = dictionary2[0]  # This is only to "load" the dictionary.
@@ -102,15 +107,18 @@ def doLDA(corpus: list[list[tuple[int, int]]], dictionary : dict[int, str], num_
 def getNewFilenames(directory: str):
     # return filenames that start witn new_ and end with .csv
     import glob
-    return glob.glob(directory + "/new_*.csv")
+    out = glob.glob(directory + "/new_*.tsv")
+    print(len(out))
+    return glob.glob(directory + "/new_*.tsv")
 #tdidf = models.TfidfModel(corpus2)
 #ldamodel = models.ldamodel.LdaModel(corpus2, num_topics=3, id2word = dictionary2, passes=20)
 
 
-filenames = getNewFilenames("data")
+directory = "data/processed_files"
+filenames = getNewFilenames(directory)
 corpus, dictionary = read_data(filenames)
 print("hier")
-doc_topics = doLDA(corpus, dictionary, 6)
+doc_topics = doLDA(corpus, dictionary, 50)
 for i in range(len(doc_topics)):
     print("{} ::: Topic: {}".format(filenames[i].split("/")[-1], doc_topics[i]))
 
