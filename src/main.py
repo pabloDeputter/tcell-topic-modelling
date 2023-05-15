@@ -512,57 +512,29 @@ def replace_sequences_with_cluster_labels(data_chunk, clusters_df):
     return data_chunk
 
 
-def process_cluster(document_term_matrix: pd.DataFrame, clusters_df, summary, file_index: None, tsv=False):
+def process_cluster(args):
+    # Retrieve arguments.
+    document_term_matrix, clustering_result, file_index, tsv = args
+    clusters_df = clustering_result.clusters_df
+    summary = clustering_result.summary()
     start = time.time()
 
-    # If there are less than 1000 clusters, we can the clustering assignments without multiprocessing.
-    if len(clusters_df) <= 1000:
-        # Replace sequences with cluster labels.
-        sequence_to_cluster = clusters_df.set_index('junction_aa')['cluster'].to_dict()
-        document_term_matrix.index = pd.Series(document_term_matrix.index).replace(sequence_to_cluster).values
+    # Create mapping from sequence to cluster.
+    sequence_to_cluster = clusters_df.set_index('junction_aa')['cluster'].to_dict()
 
-    else:
-        # Split the document_term_matrix into chunks, each of which will be processed by a separate process.
-        n_cpus = mp.cpu_count()
-        chunk_size = len(document_term_matrix) // n_cpus
-        data_chunks = [document_term_matrix[i:i + chunk_size] for i in
-                       range(0, len(document_term_matrix), chunk_size)]
+    # Create a new series where the index is the unique values of 'clusters_df['cluster']' and the values are 'summary['motif']'.
+    mapping_series = pd.Series(summary['motif'].values, index=clusters_df['cluster'].unique())
 
-        with mp.Pool(n_cpus) as pool:
-            replaced_data_chunks = pool.starmap(replace_sequences_with_cluster_labels,
-                                                [(chunk, clusters_df) for chunk in data_chunks])
-
-        # Combine the chunks back into a single DataFrame.
-        document_term_matrix = pd.concat(replaced_data_chunks)
-
-    # Group by cluster and sum the occurrences.
-    document_cluster_matrix = document_term_matrix.groupby(document_term_matrix.index).sum()
-
-    # Store the cluster assignments.
-    clusters_df['cluster_motif'] = clusters_df['cluster'].map(summary['motif'])
+    # Map the 'cluster' in 'clusters_df' to 'motif' using the created mapping series.
+    clusters_df['cluster_motif'] = clusters_df['cluster'].map(mapping_series)
     cluster_assignments = clusters_df[['junction_aa', 'cluster', 'cluster_motif']]
     cluster_assignments.columns = ['cdr3_amino_acid', 'cluster_index', 'cluster_motif']
     cluster_assignments.set_index('cluster_index', inplace=True)
     cluster_assignments.index = cluster_assignments.index.astype(str)
-    document_cluster_matrix.index = document_cluster_matrix.index.astype(str)
 
     print("Time to calculate clustering assignments: ", time.time() - start)
 
-    # Write to disk.
-    if file_index is None:
-        if tsv:
-            document_cluster_matrix.to_csv('data/emerson_preprocessed/doc_term_matrix.tsv', sep='\t')
-            cluster_assignments.to_csv('data/emerson_preprocessed/cluster_assignments.tsv', index=True, sep='\t')
-        else:
-            document_cluster_matrix.to_pickle('data/emerson_preprocessed/doc_term_matrix.pkl')
-            cluster_assignments.to_pickle('data/emerson_preprocessed/cluster_assignments.pkl')
-    elif tsv:
-        document_cluster_matrix.to_csv(f'data/emerson_preprocessed/doc_term_matrix_{file_index}.tsv', sep='\t')
-        cluster_assignments.to_csv(f'data/emerson_preprocessed/cluster_assignments_{file_index}.tsv', index=True,
-                                   sep='\t')
-    else:
-        document_cluster_matrix.to_pickle(f'data/emerson_preprocessed/doc_term_matrix_{file_index}.pkl')
-        cluster_assignments.to_pickle(f'data/emerson_preprocessed/cluster_assignments_{file_index}.pkl')
+    return sequence_to_cluster, cluster_assignments
 
 
 if __name__ == "__main__":
@@ -595,7 +567,6 @@ if __name__ == "__main__":
 
         # ===== Cluster sequences of document-term matrix =====
         document_term_matrix = pd.read_pickle(f'data/emerson_preprocessed/P0-P{SAMPLES}doc_term_matrix.pkl')
-        document_term_matrix = document_term_matrix[:10000]
 
         # Clustering with chunks.
         if CLUSTERING_CHUNKS:
@@ -612,9 +583,10 @@ if __name__ == "__main__":
             )
 
             # Calculate the total number of sequences in the dataset and save the chunk sized dataframes.
+            sorted_files = sorted(os.listdir(datadir), key=lambda x: int(x.split('_')[1].split('.')[0].split('k')[1]))
             files = []
             total_cdr3s = 0
-            for file in os.listdir(datadir):
+            for file in sorted_files:
                 df = pd.read_csv(datadir + file, sep='\t')
                 files.append(df)
                 total_cdr3s += len(df)
@@ -637,43 +609,39 @@ if __name__ == "__main__":
                                     max_sequence_size=max_seq_len,
                                     n_cpus=CLUSTERING_CPU)
 
+            print("Clustering initialized.")
+
             # Perform pre-clustering.
             for i in range(len(files)):
                 print(f"Pre-clustering file: {str(i)}.")
                 clustering.batch_precluster(files[i]['cdr3_amino_acid'])
 
-            file_index = 0
-            # Perform clustering.
-            for result in clustering.batch_cluster():
-                clusters_df = result.clusters_df
-                summary = result.summary()
-                process_cluster(document_term_matrix, clusters_df, summary, file_index=file_index,
-                                tsv=CLUSTERING_USE_TSV)
-                file_index += 1
+            # Retrieve the clustering results.
+            with mp.Pool(processes=mp.cpu_count()) as pool:
+                results = pool.map(process_cluster,
+                                   ((document_term_matrix.copy(), result, i, CLUSTERING_USE_TSV) for i, result in
+                                    enumerate(clustering.batch_cluster())))
+
+            # Combine results from multiprocessing.
+            sequence_to_cluster = {}
+            for result in results:
+                sequence_to_cluster |= result[0]
+            all_cluster_assignments = [result[1] for result in results]
+            all_cluster_assignments = pd.concat(all_cluster_assignments)
+
+            # Remove duplicates inside document_term_matrix and aggregate the counts.
+            index = pd.Index(document_term_matrix.index)
+            document_term_matrix.index = index.to_series().map(lambda x: sequence_to_cluster.get(x, x))
+            all_document_cluster_matrix = document_term_matrix.groupby(document_term_matrix.index).sum()
 
             # Write to disk.
             if CLUSTERING_USE_TSV:
-                all_cluster_assignments = pd.concat(
-                    [pd.read_csv(f'data/emerson_preprocessed/cluster_assignments_{i}.tsv', sep='\t', index_col=0) for i
-                     in
-                     range(file_index)])
-                all_cluster_assignments.to_csv('data/emerson_preprocessed/cluster_assignments.tsv', index=True,
-                                               sep='\t')
-
-                all_document_cluster_matrix = pd.concat(
-                    [pd.read_csv(f'data/emerson_preprocessed/doc_term_matrix_{i}.tsv', sep='\t', index_col=0) for i in
-                     range(file_index)])
                 all_document_cluster_matrix.to_csv('data/emerson_preprocessed/doc_term_matrix.tsv', index=True,
                                                    sep='\t')
+                all_cluster_assignments.to_csv('data/emerson_preprocessed/cluster_assignments.tsv', index=True,
+                                               sep='\t')
             else:
-                all_cluster_assignments = pd.concat(
-                    [pd.read_pickle(f'data/emerson_preprocessed/cluster_assignments_{i}.pkl') for i in
-                     range(file_index)])
                 all_cluster_assignments.to_pickle('data/emerson_preprocessed/cluster_assignments.pkl')
-
-                all_document_cluster_matrix = pd.concat(
-                    [pd.read_pickle(f'data/emerson_preprocessed/doc_term_matrix_{i}.pkl') for i in
-                     range(file_index)])
                 all_document_cluster_matrix.to_pickle('data/emerson_preprocessed/doc_term_matrix.pkl')
 
             # Clean up.
@@ -683,15 +651,29 @@ if __name__ == "__main__":
                 if file.startswith('cluster_assignments_') or file.startswith('doc_term_matrix_'):
                     os.remove(os.path.join('data/emerson_preprocessed/', file))
         else:
-
             result = cluster_single(document_term_matrix.rename_axis('cdr3_amino_acid').reset_index(),
                                     cdr3_col='cdr3_amino_acid', n_cpus=CLUSTERING_CPU)
-            clusters_df = result.clusters_df
-            summary = result.summary()
 
-            process_cluster(document_term_matrix, clusters_df, summary)
+            sequence_to_cluster, cluster_assignments = process_cluster(
+                (document_term_matrix, result, None, CLUSTERING_USE_TSV))
 
-            print(f'Found {len(summary)} clusters with an average size of {round(summary["size"].mean(), 2)}.')
+            # Remove duplicates inside document_term_matrix and aggregate the counts.
+            index = pd.Index(document_term_matrix.index)
+            document_term_matrix.index = index.to_series().map(lambda x: sequence_to_cluster.get(x, x))
+            document_term_matrix = document_term_matrix.groupby(document_term_matrix.index).sum()
+
+            # Write to disk.
+            if CLUSTERING_USE_TSV:
+                document_term_matrix.to_csv('data/emerson_preprocessed/doc_term_matrix.tsv', index=True,
+                                            sep='\t')
+                cluster_assignments.to_csv('data/emerson_preprocessed/cluster_assignments.tsv', index=True,
+                                           sep='\t')
+            else:
+                cluster_assignments.to_pickle('data/emerson_preprocessed/cluster_assignments.pkl')
+                document_term_matrix.to_pickle('data/emerson_preprocessed/doc_term_matrix.pkl')
+
+            print(
+                f'Found {len(result.summary())} clusters with an average size of {round(result.summary()["size"].mean(), 2)}.')
 
         # ===== Topic Modelling =====
         # document_cluster_matrix = pd.read_csv('data/emerson_preprocessed/document_cluster_matrix_OG.tsv', sep='\t',
