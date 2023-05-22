@@ -1,7 +1,12 @@
 import os
 import time
+import random
+import requests
+
+from typing import Tuple
 
 import pandas as pd
+import numpy as np
 import matplotlib.pyplot as plt
 
 
@@ -195,3 +200,102 @@ def plot_histogram(ax, arg1, arg2, arg3):
     ax.set_ylabel(arg2)
     ax.set_title(arg3)
     plt.show()
+
+
+def search_sequences(sequences: pd.Series):
+    """
+    Search for sequences in the VDJdb database.
+
+    :param sequences: Sequences to search for.
+    """
+    for seq in sequences:
+        print("Searching for sequence: ", seq)
+        response = requests.post('https://vdjdb.cdr3.net/api/database/search', data=json.dumps({
+            "filters": [
+                {
+                    "column": "cdr3",
+                    "value": seq,
+                    "filterType": "pattern",
+                    "negative": False
+                }
+            ]
+        }), headers={
+            "Content-Type": "application/json"
+        })
+        print(response.json())
+        if response.json()['recordsFound'] >= 1:
+            print("Found sequence: ", seq)
+        time.sleep(0.5)
+
+
+def metareportoire(samples: list, training_sample_size: int) -> Tuple[pd.DataFrame, bool]:
+    """
+    Create a metareportoire from a list of samples.
+
+    :param samples: A list of pandas DataFrame objects, each containing sequences to be concatenated.
+    :param training_sample_size: An integer specifying the maximum number of sequences to reach.
+    :return: A tuple containing the metareportoire as a pandas DataFrame and a boolean indicating whether the
+            training_sample_size was reached.
+    """
+    # Randomly select a sample.
+    random.shuffle(samples)
+    meta = samples[0]
+    meta.drop_duplicates(inplace=True)
+
+    # Concatenate the remaining samples until the training sample size is reached.
+    for i in samples[1:]:
+        meta = pd.concat([meta, i])
+        meta.drop_duplicates(inplace=True)
+        meta.reset_index()
+        if len(meta) > training_sample_size:
+            return meta.sample(training_sample_size), True
+
+    return meta, False
+
+
+def write_dataframe_to_chunks(df, chunk_size, filename_prefix, output_dir):
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
+    # Remove everything in the output directory.
+    for filename in os.listdir(output_dir):
+        file_path = os.path.join(output_dir, filename)
+        try:
+            if os.path.isfile(file_path):
+                os.unlink(file_path)
+        except Exception as e:
+            print(e)
+
+    num_chunks = len(df) // chunk_size + 1
+
+    for i, chunk_start in enumerate(range(0, len(df), chunk_size)):
+        chunk_end = min(chunk_start + chunk_size, len(df))
+        chunk = df.iloc[chunk_start:chunk_end]
+
+        filename = f"{filename_prefix}_chunk{i + 1}.tsv"
+        chunk.to_csv(filename, index=False, sep='\t')
+        print(f"Chunk {i + 1} saved to {filename}")
+
+
+def write_ndarray_to_chunks(arr, chunk_size, filename_prefix, output_dir):
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
+    # Remove everything in the output directory.
+    for filename in os.listdir(output_dir):
+        file_path = os.path.join(output_dir, filename)
+        try:
+            if os.path.isfile(file_path):
+                os.unlink(file_path)
+        except Exception as e:
+            print(e)
+
+    num_chunks = len(arr) // chunk_size + 1
+
+    for i, chunk_start in enumerate(range(0, len(arr), chunk_size)):
+        chunk_end = min(chunk_start + chunk_size, len(arr))
+        chunk = arr[chunk_start:chunk_end]
+
+        filename = f"{filename_prefix}_chunk{i + 1}.txt"
+        np.savetxt(filename, chunk, delimiter='\t', fmt='%s')
+        print(f"Chunk {i + 1} saved to {filename}")

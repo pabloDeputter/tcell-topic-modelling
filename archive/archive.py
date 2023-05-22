@@ -317,3 +317,236 @@ def pairwise_sequence_identity(seq1, seq2):
         df_filtered.drop_duplicates(subset='CDR3.amino.acid.sequence', inplace=True)
         # Remove sequences with a low read count
         return df_filtered.loc[df_filtered['Read.count'] >= min_read_count]
+
+
+def contains_stop_codon(s: str) -> bool:
+    """
+    Check whether a given DNA sequence contains any stop codons.
+
+    :param s: A string representing a DNA sequence.
+    :return: A boolean value indicating whether the input DNA sequence contains a stop codon.
+             Returns True if a stop codon is found, False otherwise.
+    """
+    stop_codons = ['TAA', 'TAG', 'TGA']
+    return any(s[i:i + 3] in stop_codons for i in range(0, len(s) - 2, 3))
+
+
+def check_stop_codon(s: pd.Series, print_results: bool = False) -> bool:
+    """
+    Check if the given pandas Series contains a stop codon in the 'CDR3.nucleotide.sequence' column.
+    Indicate which stop codons and amino acids are affected in the 'CDR3.amino.acid.sequence' column.
+
+    :param s: A pandas Series containing the required columns.
+    :param print_results: A boolean indicating whether to print the results. Default is False.
+    :return: A boolean indicating the presence of a stop codon if print_results is False.
+    """
+    nucleotide_sequence = s['CDR3.nucleotide.sequence']
+    amino_acid_sequence = s['CDR3.amino.acid.sequence']
+
+    # Define stop codons.
+    stop_codons = ['TAA', 'TAG', 'TGA']
+    stop_codon_positions = []
+    affected_amino_acids = []
+
+    # Traverse nucleotide sequence in steps of 3.
+    for i in range(0, len(nucleotide_sequence) - 2, 3):
+        codon = nucleotide_sequence[i:i + 3]
+        if codon in stop_codons:
+            # Store the stop codon and its position, we use // 3 to get the position of the affected amino acid.
+            stop_codon_positions.append((codon, i // 3))
+
+    if len(stop_codon_positions) > 0:
+        for codon, position in stop_codon_positions:
+            affected_amino_acids.append((codon, amino_acid_sequence[position]))
+
+        return affected_amino_acids
+
+        # if print_results:
+        #     print("Stop codons found:")
+        #     for codon, position in stop_codon_positions:
+        #         print(codon, "at position", position)
+        #     print("Amino acids affected:", affected_amino_acids)
+        # else:
+        #     return any(aa == '*' for aa in affected_amino_acids)
+    return False
+
+
+def contains_invalid_chars(seq: str) -> bool:
+    """
+    Check if a given CDR3 amino acid sequence contains any invalid characters.
+
+    :param seq: A string representing a CDR3 amino acid sequence.
+    :return: A boolean value indicating whether the input sequence contains any invalid characters.
+             Returns True if invalid characters are found, False otherwise.
+    """
+    valid_chars_regex = re.compile(r'^[ACDEFGHIKLMNPQRSTVWY_]+$')
+    return bool(valid_chars_regex.match(seq))
+
+
+
+
+
+def cluster_chunks(data: pd.DataFrame, n_cpus: str = '8', cdr3_col='CDR3.amino.acid.sequence'):
+    """
+    Performs clustering on a large dataset of CDR3 amino acid sequences by dividing it into smaller
+    chunks and clustering each chunk independently.
+
+    :param cdr3_col:
+    :param n_cpus: The number of CPUs to use for clustering.
+    :param data: A pandas DataFrame containing the CDR3 amino acid sequences to cluster.
+
+    :return: A list of Cluster objects containing the results of the clustering for each chunk.
+    """
+    # Calculate the total number of sequences in the dataset.
+    total_sequences = data.shape[0]
+    # Cluster size.
+    faiss_cluster_size = 5000
+    # Calculate recommended sample size.
+    training_sample_size = round(1000 * (total_sequences / faiss_cluster_size))
+
+    # Create metareportoire.
+    meta = data[[cdr3_col]].copy()
+    # Remove duplicates.
+    meta.drop_duplicates(inplace=True)
+    # Randomly sample the metareportoire.
+    if len(meta) > training_sample_size:
+        meta = meta.sample(training_sample_size)
+    # Compute the maximum sequence length in the metareportoire.
+    max_seq_len = meta[cdr3_col].str.len().max()
+
+    # Create a dictionary for chunks.
+    if not os.path.exists('data//chunks'):
+        os.makedirs('data//chunks')
+    # Clear .pkl files in 'chunks' directory.
+    [os.remove(os.path.join(dirpath, file)) for dirpath, dirnames, filenames in os.walk('data/chunks') for
+     file
+     in filenames if file.endswith('.pkl')
+     ]
+    time.sleep(1)
+
+    # Clear cluster_batch directories.
+    for dir in os.listdir('./'):
+        if dir.startswith('clustcr_batch') and os.path.isdir(os.path.join('./', dir)):
+            shutil.rmtree(os.path.join('./', dir))
+
+    time.sleep(1)
+
+    chunk_size = 100000
+    num_chunks = (data.shape[0] + chunk_size - 1) // chunk_size
+    # Save chunks to disk.
+    for i in range(num_chunks):
+        start = i * chunk_size
+        end = min(start + chunk_size, len(data))
+        utils.save_df(data.iloc[start:end], f'data/chunks/chunk_{i}.pkl')
+
+    start_time = time.time()
+    print(
+        f'Perform clustering with a faiss_cluster_size of {faiss_cluster_size} and a training_sample_size of {training_sample_size} with a total of {total_sequences} sequences.')
+    # Create clustering object.
+    clustering = Clustering(faiss_training_data=meta[cdr3_col], fitting_data_size=total_sequences,
+                            max_sequence_size=max_seq_len, n_cpus=n_cpus, method='two-step',
+                            faiss_cluster_size=faiss_cluster_size, mcl_params=[1.2, 2])
+
+    print("Batch preclustering...")
+    filenames = sorted(file for file in os.listdir('data/chunks') if file.endswith('.pkl'))
+    for file in filenames:
+        f = pd.read_pickle(os.path.join('data/chunks', file))
+        clustering.batch_precluster(f[cdr3_col])
+
+    print("Batch clustering...")
+    clusters = list(clustering.batch_cluster())
+
+    print(f"Elapsed time: {time.time() - start_time} seconds")
+    return clusters
+
+
+def cluster_single(data: pd.DataFrame, n_cpus='8',
+                   cdr3_col='CDR3.amino.acid.sequence', v_gene_col='bestVGene',
+                   include_vgene: bool = False) -> ClusteringResult:
+    """
+    Performs clustering on a single sample of CDR3 amino acid sequences.
+
+    :param data: Data containing the CDR3 amino acid sequences to cluster.
+    :param n_cpus: The number of CPUs to use for clustering.
+    :param v_gene_col: Column name of the V-gene column.
+    :param cdr3_col: Column name of the CDR3 amino acid sequence column.
+    :param include_vgene: Include V-gene information in the clustering.
+    :return: A Clustering object containing the results of the clustering.
+    """
+    clustering = Clustering(n_cpus=8, method='two-step', mcl_params=[1.2, 2])
+    if include_vgene:
+        return clustering.fit(data[[cdr3_col, v_gene_col]], include_vgene=True, cdr3_col=cdr3_col,
+                              v_gene_col=v_gene_col)
+    else:
+        return clustering.fit(data[cdr3_col])
+
+
+def cluster(df: pd.DataFrame, filename_save: str, count_col: str = 'Read.count',
+            amino_acid_col: str = 'CDR3.amino.acid.sequence'):
+    # result_ = cluster_single(df, include_vgene=True) # Doesn't work properly and way too slow
+    result = cluster_single(df, cdr3_col=amino_acid_col)
+    # utils.visualize_features(result.compute_features())
+    clusters_df = result.clusters_df
+    summary = result.summary()
+
+    print(f'Found {len(summary)} clusters with an average size of {round(summary["size"].mean(), 2)}.')
+
+    # ===== Cluster assignments =====
+    start = time.time()
+    # Group sequences by their cluster and compute total cluster Read.count.
+    clusters_df[count_col] = clusters_df['junction_aa'].map(df.set_index(amino_acid_col)[count_col])
+    cluster_data = clusters_df.groupby('cluster').agg({'junction_aa': 'first', count_col: 'sum'}).reset_index()
+
+    # Calculate term frequency (TF) for each cluster.
+    # Divide the read count of each sequence by the total read count of all sequences in the dataset.
+    total_read_counts = df[count_col].sum()
+    cluster_data['TF'] = ((cluster_data[count_col] / total_read_counts).astype(float) * 100)
+
+    # Replace sequences with cluster motif.
+    cluster_data[amino_acid_col] = cluster_data.apply(
+        lambda row: f"{summary.loc[row['cluster']]['motif']}", axis=1)
+
+    # Merge original sequences with cluster data.
+    merged_data = df.set_index(amino_acid_col).join(cluster_data.set_index('junction_aa'),
+                                                    rsuffix='_cluster')
+
+    # Replace values with cluster data.
+    merged_data[amino_acid_col] = np.where(merged_data[amino_acid_col].isnull(),
+                                           merged_data.index,
+                                           merged_data[amino_acid_col])
+    merged_data[count_col] = np.where(merged_data[f'{count_col}_cluster'].isnull(), merged_data[count_col],
+                                      merged_data[f'{count_col}_cluster'])
+
+    # Calculate term frequency (TF) for each sequence.
+    merged_data['TF'] = (merged_data[count_col] / total_read_counts).astype(float)
+    df = merged_data[[count_col, amino_acid_col, 'TF']].reset_index(drop=True).sort_values(
+        by='TF', ascending=False)
+
+    print(f"Elapsed time: {time.time() - start} seconds")
+    df.to_csv(filename_save, index=False, sep='\t')
+
+
+@utils.timer_decorator
+def preprocess_files_individually(files: List[str], samples: int = 10, min_read_count: int = 20):
+    """
+    Preprocess the files individually.
+
+    :param files: List of files to preprocess.
+    :param min_read_count: Minimum read count to filter on.
+    :param samples: Amount of samples to preprocess.
+    """
+    files = files[:samples]
+    for filename in tqdm(files, desc='Preprocessing files'):
+        # skip files that have already been processed
+        if os.path.exists(f'data/emerson_preprocessed/{filename.split(".")[0]}?minReadCount={min_read_count}.tsv'):
+            continue
+
+        df = pd.read_csv(os.path.join('data/emerson', filename), sep='\t', index_col=0)
+        preprocess_file(df, f'data/emerson_preprocessed/{filename.split(".")[0]}?minReadCount={min_read_count}.tsv',
+                        sample_id=str(int(filename.split('_')[0].replace('P', ''))), min_read_count=min_read_count,
+                        amino_acid_col='cdr3_amino_acid',
+                        count_col='seq_reads', v_gene_col='v_resolved', j_gene_col='j_resolved',
+                        nucleotide_col='cdr3_rearrangement')
+
+
+
