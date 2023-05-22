@@ -5,7 +5,6 @@ import numpy as np
 import collections
 import gensim.utils
 from gensim.models import LdaMulticore
-import cython
 
 def read_data(filenames: list[str]):
     corpus : list[list[tuple[int, int]]] = [] # list van lijsten van tuples (id, aantal)
@@ -69,8 +68,8 @@ def doLDA(corpus: list[list[tuple[int, int]]], dictionary : dict[int, str], num_
     import logging
     logging.basicConfig(format='%(asctime)s : %(levelname)s : %(message)s', level=logging.WARNING)
     chunksize = 200000
-    passes = 10
-    iterations =350
+    passes = 25
+    iterations =500
     eval_every = None # Don't evaluate model perplexity, takes too much time.
     #temp = dictionary2[0]  # This is only to "load" the dictionary.
     #id2word = dictionary2.id2token
@@ -97,8 +96,13 @@ def doLDA(corpus: list[list[tuple[int, int]]], dictionary : dict[int, str], num_
     top_topics = model.top_topics(corpus)
     avg_topic_coherence = sum([t[1] for t in top_topics]) / num_topics
     print('Average topic coherence: %.4f.' % avg_topic_coherence)
-    from pprint import pprint
-    pprint(top_topics)
+    # write to file
+    with open("data/topics1.txt", "w") as f:
+        f.write("Average topic coherence: %.4f.\n" % avg_topic_coherence)
+        for i in range(len(top_topics)):
+            f.write("{}\n".format(top_topics[i]))
+
+    f.close()
 
     # which topic is dominant in each document
     doc_topics = model.get_document_topics(corpus)
@@ -117,10 +121,12 @@ def getNewFilenames(directory: str):
 directory = "data/processed_files"
 filenames = getNewFilenames(directory)
 corpus, dictionary = read_data(filenames)
-print("hier")
-doc_topics = doLDA(corpus, dictionary, 50)
-for i in range(len(doc_topics)):
-    print("{} ::: Topic: {}".format(filenames[i].split("/")[-1], doc_topics[i]))
+
+doc_topics = doLDA(corpus, dictionary, 2)
+# write to file
+with open("mapping.txt", "w") as f:
+    for i in range(len(doc_topics)):
+        f.write("{} ::: Topic: {}\n".format(filenames[i].split("/")[-1], doc_topics[i]))
 
 
 
