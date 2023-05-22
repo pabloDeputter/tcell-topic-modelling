@@ -583,73 +583,73 @@ if __name__ == "__main__":
         #
         #     print(
         #         f'Found {len(result.summary())} clusters with an average size of {round(result.summary()["size"].mean(), 2)}.')
-
-        # ===== Topic Modelling =====
-        tdm = pd.read_pickle('data/emerson_preprocessed/P0-P666doc_term_matrix_clustered?minReadCount=200.pkl')
-        samples_ = pd.read_csv(
-            'data/emerson_preprocessed/hla_clusters.tsv', sep='\t'
-        )['sample_name'].values
-        samples_ = [int(i.split("P")[1]) for i in samples_]
-        tdm.drop(columns=[col for col in tdm if col not in samples_], inplace=True)
-
-        # Transpose the matrix so that rows are documents (samples) and columns are terms (sequences).
-        tdm = tdm.T
-
-        print(tdm)
-
-        # Create Dictionary and Corpus.
-        # tpm.create_dictionary(tdm, 'data/emerson_preprocessed/P0-P666doc_term_matrix_clustered?minReadCount=200.dict')
-        dictionary: corpora.Dictionary = corpora.Dictionary.load(
-            'data/emerson_preprocessed/P0-P666doc_term_matrix_clustered?minReadCount=200.dict')
-        # tpm.create_corpus(tdm, dictionary, 'data/emerson_preprocessed/P0-P666doc_term_matrix_clustered?minReadCount=200.mm')
-        corpus: corpora.MmCorpus = corpora.MmCorpus(
-            'data/emerson_preprocessed/P0-P666doc_term_matrix_clustered?minReadCount=200.mm')
-
-        print(f'{corpus.num_docs} samples/documents inside the corpus.')
-        print(f'{corpus.num_terms} sequences/terms inside the corpus.')
-
-        # Train LDA model.
-        # model = tpm.train_model(corpus, dictionary, 'data/emerson_preprocessed/P0-P666doc_term_matrix_clustered?minReadCount=200.model', num_topics=15, chunksize=2000, iterations=1500, passes=100)
-
-        # # Find the optimal parameters (duurt veel te lang)
-        # # tpm.optimize_parameters(tdm, corpus, dictionary, max_topics=25)
         #
-        # Load model.
-        model: models.ldamodel.LdaModel = models.ldamodel.LdaModel.load(
-            'data/emerson_preprocessed/P0-P666doc_term_matrix_clustered?minReadCount=200.model')
-
-        # Get the most dominant topics for each sample/document.
-        doc_topics = [model.get_document_topics(doc) for doc in corpus]
-        # Convert to dataframe.
-        doc_topics_df = pd.DataFrame(doc_topics)
-        # Write to disk.
-        # doc_topics_df.to_csv('data/emerson_preprocessed/P0-P100doc_topics.tsv', sep='\t', index=False)
-        # doc_topics_df.to_csv('data/emerson_preprocessed/P0-P600doc_topics.tsv', sep='\t', index=False)
-
-        # Get all topics and their probabilities for each sample/document.
-        topics_list = [[(topic_id, round(prob, 3)) for topic_id, prob in model.get_document_topics(bow)] for bow in
-                       corpus]
-        topic_df = pd.DataFrame(topics_list, index=tdm.index)
-        topic_df.index = topic_df.index.astype(int)
-
-        # Load cluster assignments.
-        cluster_assignments = pd.read_pickle('data/emerson_preprocessed/P0-P666cluster_assignments?minReadCount=200.pkl')
-        # cluster_assignments = pd.read_pickle(
-        #     'data/emerson_preprocessed/P0-P100cluster_assignments.pkl')
-
-        # Print each topic.
-        for topic_id in range(model.num_topics):
-            print(f"Topic #{topic_id}")
-            # Get most probable sequences for this topic.
-            for sequence, prob in model.show_topic(topic_id):
-
-                # If sequence is a cluster label, print the cluster contents.
-                if sequence in cluster_assignments.index:
-                    rows = cluster_assignments.loc[cluster_assignments.index == str(sequence)]
-                    print(f"\tCluster: {rows['cluster_motif'][0]}, Probability: {prob:.4f}")
-                    print(f"\t\tCluster Contents: {', '.join(rows['cdr3_amino_acid'])}")
-                else:
-                    print(f"\tSequence: {sequence}, Probability: {prob:.4f}")
+        # # ===== Topic Modelling =====
+        # tdm = pd.read_pickle('data/emerson_preprocessed/P0-P666doc_term_matrix_clustered?minReadCount=200.pkl')
+        # samples_ = pd.read_csv(
+        #     'data/emerson_preprocessed/hla_clusters.tsv', sep='\t'
+        # )['sample_name'].values
+        # samples_ = [int(i.split("P")[1]) for i in samples_]
+        # tdm.drop(columns=[col for col in tdm if col not in samples_], inplace=True)
+        #
+        # # Transpose the matrix so that rows are documents (samples) and columns are terms (sequences).
+        # tdm = tdm.T
+        #
+        # print(tdm)
+        #
+        # # Create Dictionary and Corpus.
+        # # tpm.create_dictionary(tdm, 'data/emerson_preprocessed/P0-P666doc_term_matrix_clustered?minReadCount=200.dict')
+        # dictionary: corpora.Dictionary = corpora.Dictionary.load(
+        #     'data/emerson_preprocessed/P0-P666doc_term_matrix_clustered?minReadCount=200.dict')
+        # # tpm.create_corpus(tdm, dictionary, 'data/emerson_preprocessed/P0-P666doc_term_matrix_clustered?minReadCount=200.mm')
+        # corpus: corpora.MmCorpus = corpora.MmCorpus(
+        #     'data/emerson_preprocessed/P0-P666doc_term_matrix_clustered?minReadCount=200.mm')
+        #
+        # print(f'{corpus.num_docs} samples/documents inside the corpus.')
+        # print(f'{corpus.num_terms} sequences/terms inside the corpus.')
+        #
+        # # Train LDA model.
+        # # model = tpm.train_model(corpus, dictionary, 'data/emerson_preprocessed/P0-P666doc_term_matrix_clustered?minReadCount=200.model', num_topics=15, chunksize=2000, iterations=1500, passes=100)
+        #
+        # # # Find the optimal parameters (duurt veel te lang)
+        # # # tpm.optimize_parameters(tdm, corpus, dictionary, max_topics=25)
+        # #
+        # # Load model.
+        # model: models.ldamodel.LdaModel = models.ldamodel.LdaModel.load(
+        #     'data/emerson_preprocessed/P0-P666doc_term_matrix_clustered?minReadCount=200.model')
+        #
+        # # Get the most dominant topics for each sample/document.
+        # doc_topics = [model.get_document_topics(doc) for doc in corpus]
+        # # Convert to dataframe.
+        # doc_topics_df = pd.DataFrame(doc_topics)
+        # # Write to disk.
+        # # doc_topics_df.to_csv('data/emerson_preprocessed/P0-P100doc_topics.tsv', sep='\t', index=False)
+        # # doc_topics_df.to_csv('data/emerson_preprocessed/P0-P600doc_topics.tsv', sep='\t', index=False)
+        #
+        # # Get all topics and their probabilities for each sample/document.
+        # topics_list = [[(topic_id, round(prob, 3)) for topic_id, prob in model.get_document_topics(bow)] for bow in
+        #                corpus]
+        # topic_df = pd.DataFrame(topics_list, index=tdm.index)
+        # topic_df.index = topic_df.index.astype(int)
+        #
+        # # Load cluster assignments.
+        # cluster_assignments = pd.read_pickle('data/emerson_preprocessed/P0-P666cluster_assignments?minReadCount=200.pkl')
+        # # cluster_assignments = pd.read_pickle(
+        # #     'data/emerson_preprocessed/P0-P100cluster_assignments.pkl')
+        #
+        # # Print each topic.
+        # for topic_id in range(model.num_topics):
+        #     print(f"Topic #{topic_id}")
+        #     # Get most probable sequences for this topic.
+        #     for sequence, prob in model.show_topic(topic_id):
+        #
+        #         # If sequence is a cluster label, print the cluster contents.
+        #         if sequence in cluster_assignments.index:
+        #             rows = cluster_assignments.loc[cluster_assignments.index == str(sequence)]
+        #             print(f"\tCluster: {rows['cluster_motif'][0]}, Probability: {prob:.4f}")
+        #             print(f"\t\tCluster Contents: {', '.join(rows['cdr3_amino_acid'])}")
+        #         else:
+        #             print(f"\tSequence: {sequence}, Probability: {prob:.4f}")
 
         # Read metadata from disk.
         # metadata = pd.read_csv('data/emerson/metadata_merged.tsv', sep='\t')
@@ -669,21 +669,22 @@ if __name__ == "__main__":
         # print(metadata_with_topics)
         # metadata_with_topics.to_csv('.tsv', sep='\t', index=False)
 
-        hla_clusters = pd.read_csv('data/emerson_preprocessed/hla_clusters.tsv', sep='\t')
-        hla_clusters['sample_name'] = hla_clusters['sample_name'].str.split('P').str[1].astype(int)
+        # hla_clusters = pd.read_csv('data/emerson_preprocessed/hla_clusters.tsv', sep='\t')
+        # hla_clusters['sample_name'] = hla_clusters['sample_name'].str.split('P').str[1].astype(int)
+        #
+        # merged_df = hla_clusters.merge(topic_df, left_on='sample_name', right_index=True)
+        #
+        # merged_df['topic'] = merged_df[0].apply(lambda x: x[0])
+        #
+        # umap_cluster_counts = merged_df.groupby('umap_hdb_cluster_labels')['topic'].value_counts()
+        #
+        # umap_cluster_percentages = umap_cluster_counts.groupby(level=0).apply(lambda x: x / x.sum() * 100)
 
-        merged_df = hla_clusters.merge(topic_df, left_on='sample_name', right_index=True)
+        umap_cluster_percentages = pd.read_csv('data/emerson_preprocessed/results.tsv', sep='\t', index_col=0)
 
-        merged_df['topic'] = merged_df[0].apply(lambda x: x[0])
-
-        umap_cluster_counts = merged_df.groupby('umap_hdb_cluster_labels')['topic'].value_counts()
-
-        umap_cluster_percentages = umap_cluster_counts.groupby(level=0).apply(lambda x: x / x.sum() * 100)
-
-        umap_cluster_percentages.to_csv('data/emerson_preprocessed/results.tsv', sep='\t')
-
-        print(umap_cluster_percentages)
-
+        grouped = umap_cluster_percentages.groupby('umap_hdb_cluster_labels')
+        dominant_topics = grouped.apply(lambda x: x[x['topic.1'] == x['topic.1'].max()])
+        print(dominant_topics)
 
         # # Load the term-document matrix, sequences, and encoders
         # with np.load('data/emerson_preprocessed/P0-P668doc_term_matrix.npz', allow_pickle=True) as loader:
@@ -808,3 +809,15 @@ if __name__ == "__main__":
         #
         # print(df.columns)
         # print(df)
+
+        import seaborn as sns
+        import matplotlib.pyplot as plt
+
+        df = pd.read_csv("data/emerson/metadata_merged_full.tsv", sep="\t", index_col=[0])
+        hla_cols = [c for c in df.columns if c.startswith("HLA")]
+        hla_df = df.set_index("sample_name")[hla_cols].copy().dropna()
+        fig, ax = plt.subplots(figsize=(50, 5))
+        hla_df.sort_values(by="sample_name", inplace=True)
+        sns.heatmap(hla_df.dropna().astype(int)[:50].iloc[:, : 200]
+                    , cbar=False)
+        fig.show()
